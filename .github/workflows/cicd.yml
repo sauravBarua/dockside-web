@@ -1,0 +1,126 @@
+name: Web CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The build only needs the variable to exist, because no page calls the API at build time.
+      NEXT_PUBLIC_API_BASE_URL: http://localhost/api/v1
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm build
+
+  docker:
+    if: github.event_name == 'push'
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.prod
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=${{ secrets.CLIENT_PUBLIC_API_BASE_URL }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/dockside-web:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/dockside-web:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    if: github.event_name == 'push'
+    needs: docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host dockside
+            HostName $VPS_HOST
+            User $VPS_USER
+            IdentityFile ~/.ssh/id_deploy
+            BatchMode yes
+            ServerAliveInterval 30
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Log in to Docker Hub on the server
+        run: |
+          printf '%s' "$DOCKERHUB_TOKEN" \
+            | ssh dockside "docker login --username '$DOCKERHUB_USERNAME' --password-stdin"
+
+      - name: Deploy web
+        run: |
+          ssh dockside bash -s -- "$IMAGE_TAG" <<'REMOTE'
+          set -euo pipefail
+          TAG="$1"
+          case "$TAG" in
+            *[!0-9a-f]*|"") echo "Invalid image tag"; exit 1 ;;
+          esac
+          cd ~/dockside
+          COMPOSE="docker compose -f docker-compose.prod.yaml"
+
+          sed -i "s|^WEB_TAG=.*|WEB_TAG=$TAG|" .env
+
+          $COMPOSE pull web
+          $COMPOSE up -d --wait --no-deps web
+
+          docker image prune -f
+          $COMPOSE ps
+          REMOTE
+
+      - name: Smoke test through Nginx
+        run: |
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null \
+            -w "login page: %{http_code}\n" "http://$VPS_HOST/login"
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null \
+            -w "home page (web calls api): %{http_code}\n" "http://$VPS_HOST/"
