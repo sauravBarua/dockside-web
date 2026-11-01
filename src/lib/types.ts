@@ -2,6 +2,11 @@ export type Tag = {
   name: string;
 };
 
+export type TagCount = {
+  name: string;
+  postCount: number;
+};
+
 export type Post = {
   id: string;
   title: string;
