@@ -41,3 +41,13 @@ export type AuthResponse = {
 export type FormState = {
   error?: string;
 };
+
+export type PostFormState = {
+  error?: string;
+  values?: {
+    title: string;
+    content: string;
+    tags: string;
+    published: boolean;
+  };
+};

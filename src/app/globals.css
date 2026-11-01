@@ -165,3 +165,25 @@ main {
 .actions form {
   margin: 0;
 }
+
+.form.wide {
+  max-width: none;
+}
+
+.form textarea {
+  padding: 0.5rem;
+  font: inherit;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.form label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.actions {
+  align-items: center;
+}

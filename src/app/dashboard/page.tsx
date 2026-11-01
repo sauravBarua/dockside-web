@@ -17,6 +17,9 @@ export default async function DashboardPage() {
     <>
       <h1>My posts</h1>
       <p className="meta">Signed in as {user.name}</p>
+      <p>
+        <Link href="/dashboard/new">+ New post</Link>
+      </p>
 
       {mine.items.length === 0 ? (
         <p>You have no posts yet.</p>
@@ -32,6 +35,7 @@ export default async function DashboardPage() {
                 · Updated {formatDate(post.updatedAt)}
               </p>
               <div className="actions">
+                <Link href={`/dashboard/${post.id}/edit`}>Edit</Link>
                 <form action={togglePublishAction}>
                   <input type="hidden" name="id" value={post.id} />
                   <input type="hidden" name="published" value={String(!post.published)} />
