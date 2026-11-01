@@ -26,3 +26,18 @@ export type PostList = {
   limit: number;
   total: number;
 };
+
+export type User = {
+  id: string;
+  email: string;
+  name: string;
+};
+
+export type AuthResponse = {
+  token: string;
+  user: User;
+};
+
+export type FormState = {
+  error?: string;
+};
